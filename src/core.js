@@ -1,6 +1,9 @@
 // core.js: constants, helpers, paper, paint wrapper, compositing and render hooks.
 const W = 1920, H = 1080;
-const BPM = 88, BEAT = 60 / BPM, OFF = 0.21, BOIL = 12, DUR = 156.6;
+// Paint resolution scale: scenes are authored in 1920x1080 world units; the watercolor layer is painted at W*RS x H*RS
+// (p5 pixelDensity) and upscaled under full-res lettering and grain. ?rs=0.5 in the page URL trades paint detail for speed.
+const RS = +(new URLSearchParams(location.search).get('rs') || 1);
+const BPM = 136, BEAT = 60 / BPM, OFF = 0.27, BOIL = 12, DUR = 295.3;
 const TAU = Math.PI * 2;
 const PAL = {
   paper: '#F3EBDC', ink: '#2B2233', clay: '#D97757', clayDk: '#A84D33', clayLt: '#F2A283',
@@ -59,7 +62,7 @@ function toScreen(x, y) {
 }
 
 // ---------- full-frame effects (call outside a camera, in screen space) ----------
-function flash(k, col = '#FFFDF6') { if (k > .01) paint(rectPts(-60, -60, W + 120, H + 120), { wash: col, washOp: 255 * clamp(k), ink: null }); if (k > .6) METER_SHOWN = true; }
+function flash(k, col = '#FFFDF6') { if (k > .01) paint(rectPts(-60, -60, W + 120, H + 120), { wash: col, washOp: 255 * clamp(k), ink: null }); }
 // Paint everything OUTSIDE a star-shaped hole (irises, mouth-shaped reveals, keyholes).
 function irisShape(pts, col = PAL.ink, far = 4000) {
   const n = pts.length; let cx = 0, cy = 0; for (const p of pts) { cx += p[0]; cy += p[1]; } cx /= n; cy /= n;
@@ -70,7 +73,7 @@ function irisShape(pts, col = PAL.ink, far = 4000) {
     paint([a2, b2, out(b2), out(a2)], { wash: col, washOp: 255, ink: null });
   }
 }
-function iris(cx, cy, r, col = PAL.ink) { if (r < 60) METER_SHOWN = true; if (r < 4) paint(rectPts(-60, -60, W + 120, H + 120), { wash: col, ink: null }); else irisShape(ellPts(cx, cy, r, r, 40), col); }
+function iris(cx, cy, r, col = PAL.ink) { if (r < 4) paint(rectPts(-60, -60, W + 120, H + 120), { wash: col, ink: null }); else irisShape(ellPts(cx, cy, r, r, 40), col); }
 
 let T = 0, paperG = null, grainC = null, letG = null, outC = null, outX = null;
 let LETTERS = [], KARAOKE = null;
@@ -95,7 +98,43 @@ function starPts(cx, cy, r, inner = .38, n = 4, rot = -Math.PI / 2) {
 
 // ---------- paint wrapper ----------
 // One call = one painted shape: optional flat wash, optional watercolor fill, optional hatch, optional ink outline.
+// Watercolor fills are by far the most expensive thing to render, so small ones (under FILL_MIN px², or all of them
+// when o.flat is set) are painted as a translucent flat wash instead. Big fills keep their bleed and texture.
+const FILL_MIN = +(new URLSearchParams(location.search).get("fm") ?? 90000);
+// p5.brush silently drops a shape whose on-screen box is wider than its buffers (about 4096 px), which is exactly what
+// full-frame backgrounds become under a zoomed-in camera. So big polygons are clipped to the visible area first
+// (in screen space, through the current transform, then mapped back).
+function clipBig(pts) {
+  const M = p5.instance._renderer.states.uModelMatrix.mat4, n = pts.length;
+  const scr = pts.map(p => [M[0] * p[0] + M[4] * p[1] + M[12] + W / 2, M[1] * p[0] + M[5] * p[1] + M[13] + H / 2]);
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const p of scr) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }
+  if (x1 - x0 < 3200 && y1 - y0 < 3200) return pts;
+  const m = 200, edges = [[0, -m, 1], [0, W + m, -1], [1, -m, 1], [1, H + m, -1]];
+  let poly = scr;
+  for (const [ax, v, dir] of edges) {
+    const out = [], inside = p => (p[ax] - v) * dir >= 0;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length], ia = inside(a), ib = inside(b);
+      if (ia) out.push(a);
+      if (ia !== ib) { const f = (v - a[ax]) / (b[ax] - a[ax]); out.push([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]); }
+    }
+    poly = out; if (poly.length < 3) return null;
+  }
+  const det = M[0] * M[5] - M[4] * M[1];
+  return poly.map(([sx, sy]) => { const x = sx - W / 2 - M[12], y = sy - H / 2 - M[13]; return [(M[5] * x - M[4] * y) / det, (-M[1] * x + M[0] * y) / det]; });
+}
 function paint(pts, o = {}) {
+  if (pts.length > 2 && !o.clipped) { pts = clipBig(pts); if (!pts) return; o = { ...o, clipped: true }; }
+  if (o.fill && !o.forceFill) {
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const p of pts) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }
+    const sc = CAM ? CAM.zoom : 1;
+    if (o.flat || (x1 - x0) * (y1 - y0) * sc * sc < FILL_MIN) {
+      const { fill, fillOp, ...rest } = o;
+      if (rest.wash || rest.hatch) paint(pts, { ...rest, ink: null });
+      paint(pts, { ...rest, hatch: null, wash: fill, washOp: (fillOp ?? 170) * .7 });
+      return;
+    }
+  }
   if (o.wash || o.fill || o.hatch) {
     if (o.wash) brush.wash(o.wash, o.washOp ?? 255); else brush.noWash();
     if (o.fill) { brush.fill(o.fill, o.fillOp ?? 170); brush.fillBleed(o.bleed ?? .1); brush.fillTexture(o.tex ?? .4, o.border ?? .35); } else brush.noFill();
@@ -147,7 +186,7 @@ function flushLetters() {
   push(); resetMatrix(); translate(-W / 2, -H / 2);
   brush.noStroke(); brush.noHatch(); brush.noWash(); brush.fill('#000000', 1); brush.fillBleed(0); brush.fillTexture(0, 0);
   brush.polygon([[-50, -50], [-40, -50], [-40, -40]]); brush.noFill();
-  image(letG, 0, 0); pop();
+  image(letG, 0, 0, W, H); pop();
 }
 
 // ---------- paper ----------
@@ -173,14 +212,15 @@ function makeGrain() {
 
 // ---------- custom brushes ----------
 function defineBrushes() {
-  brush.add('ink', { type: 'default', weight: 5, scatter: .25, sharpness: .8, grain: 40, opacity: 235, spacing: .2, pressure: [1.15, .75], rotate: 'natural', noise: .15 });
-  brush.add('inkfine', { type: 'default', weight: 2.6, scatter: .15, sharpness: .85, grain: 40, opacity: 230, spacing: .2, pressure: [1.1, .8], rotate: 'natural', noise: .1 });
-  brush.add('dry', { type: 'default', weight: 14, scatter: 3, sharpness: .3, grain: 6, opacity: 90, spacing: .6, pressure: [1, .6], rotate: 'natural', noise: .4 });
+  const add = (name, p) => brush.add(name, p);
+  add('ink', { type: 'default', weight: 5, scatter: .25, sharpness: .8, grain: 40, opacity: 235, spacing: .2, pressure: [1.15, .75], rotate: 'natural', noise: .15 });
+  add('inkfine', { type: 'default', weight: 2.6, scatter: .15, sharpness: .85, grain: 40, opacity: 230, spacing: .2, pressure: [1.1, .8], rotate: 'natural', noise: .1 });
+  add('dry', { type: 'default', weight: 14, scatter: 3, sharpness: .3, grain: 6, opacity: 90, spacing: .6, pressure: [1, .6], rotate: 'natural', noise: .4 });
 }
 
 // ---------- frame ----------
 async function setup() {
-  createCanvas(W, H, WEBGL); pixelDensity(1); noLoop();
+  createCanvas(W, H, WEBGL); pixelDensity(RS); noLoop();
   brush.scaleBrushes(5); defineBrushes();
   paperG = makePaper(); grainC = makeGrain(); letG = createGraphics(W, H); letG.pixelDensity(1);
   outC = document.getElementById('out'); outX = outC.getContext('2d');
@@ -190,7 +230,7 @@ async function setup() {
 }
 function draw() {
   if (!window.ready) return;
-  LETTERS = []; KARAOKE = null; METER_SHOWN = false; CAM = null;
+  LETTERS = []; KARAOKE = null; CAM = null;
   push(); translate(-W / 2, -H / 2);
   randomSeed(1000 + Math.floor(T * BOIL)); noiseSeed(77);
   image(paperG, 0, 0);

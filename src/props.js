@@ -1,17 +1,12 @@
-// props.js: the recurring theatre set and the P(doom) meter + pump. All in world coordinates of a 1920x1080 frame.
+// props.js: the theatre set (used for the big song-and-dance moments). All in world coordinates of a 1920x1080 frame.
 //
 // Stage layout: backdrop above y 800, wooden floor from y 800 down, side curtains at the frame edges, valance on top.
 //   stageBack(t, o)  → backdrop (default: rotating watercolor sunburst) + floor. Draw characters/props after it.
 //   stageFront(t, o) → side curtains + valance, drawn last so they frame everything.
 //   o: { a, b } sunburst colours · backdrop: fn(t) replaces the sunburst · floor colour · curtain: 0 open → 1 closed
 //      · alarm: 0..1 red siren wash · spots: [[x, colour], ...] spotlight cones hitting the floor at x.
-// meterProp(x, y, s, v, o): standing thermometer, base on the floor at (x, y); s = 1 is ~560px tall. v = percent.
-//   o: { cracked 0..1, glow, label (default 'P(DOOM)') }. Sets METER_SHOWN so the corner meter overlay hides.
-// pumpProp(x, y, s, h): bicycle pump on the floor at (x, y), handle height h (0 down .. 1 up), hose runs to hoseTo [x, y].
-// pumpH(t): handle height driven by the beat; the down-stroke lands exactly on each beat.
 
 const CURTAIN = '#B8323F', CURTAIN_DK = '#7A1C2B', GOLD = '#E8B23A', WOOD = '#B87A4B', WOOD_DK = '#7C4A2C';
-let METER_SHOWN = false;
 
 function sunburst(cx, cy, a, b, rot = 0, n = 16, r = 2200, op = 120) {
   for (let i = 0; i < n; i++) {
@@ -71,45 +66,5 @@ function stageFront(t, o = {}) {
   if (o.alarm) paint(rectPts(-400, -400, W + 800, H + 800), { fill: '#E0283F', fillOp: 110 * clamp(o.alarm), bleed: .02, tex: .5, border: .2, ink: null });
 }
 
-function meterColor(v) { return v < 40 ? PAL.sap : v < 75 ? PAL.ochre : '#D8394E'; }
-function meterProp(x, y, s, v, o = {}) {
-  METER_SHOWN = true;
-  const col = meterColor(v), sw = clamp(1.3 * s, .5, 2.2);
-  push(); translate(x, y); scale(s);
-  // stand
-  paint(rectPts(-110, -30, 220, 30, 3), { wash: WOOD, fill: WOOD_DK, fillOp: 70, tex: .6, ink: PAL.ink, sw });
-  paint(rectPts(-12, -80, 24, 55), { wash: WOOD_DK, ink: PAL.ink, sw: sw * .7 });
-  // tube + bulb
-  paint(rrPts(-38, -520, 76, 440, 38, 2), { wash: PAL.cream, washOp: 255, ink: PAL.ink, sw });
-  const hh = 390 * clamp(v / 100);
-  if (hh > 14) paint(rrPts(-24, -110 - hh, 48, hh + 30, 22, 1.5), { wash: col, washOp: 235, fill: PAL.ink, fillOp: 30, tex: .6, ink: null });
-  paint(ellPts(0, -92, 70, 70, 26, 2), { wash: col, washOp: 245, fill: PAL.ink, fillOp: 25, ink: PAL.ink, sw });
-  if (o.glow) paint(ellPts(0, -92, 120, 120, 26, 6), { fill: col, fillOp: 90 * o.glow, bleed: .3, ink: null });
-  inkLine([[-22, -490], [-22, -160]], .9, '#FFFFFF', 'inkfine', 0);
-  for (let q = 1; q < 10; q++) inkLine([[-38, -110 - 390 * q / 10], [q % 5 ? -24 : -12, -110 - 390 * q / 10]], .7, PAL.ink, 'inkfine', 0);
-  if (o.cracked) for (let c = 0; c < 3 * o.cracked; c++) {
-    const cy = -300 - c * 60, p = [[-38, cy]]; for (let k = 1; k < 5; k++) p.push([-38 + k * 19, cy + (k % 2 ? -18 : 14) + jit(4)]);
-    inkLine(p, 1, PAL.ink, 'inkfine', 0);
-  }
-  // sign
-  paint(rrPts(-120, -610, 240, 70, 12, 2), { wash: WOOD, fill: WOOD_DK, fillOp: 60, tex: .6, ink: PAL.ink, sw });
-  pop();
-  letterAt(o.label || 'P(DOOM)', x, y - 575 * s, 46 * s, PAL.cream);
-  letterAt((v >= 99.5 ? v.toFixed(1) : Math.floor(v)) + '%', x, y - 92 * s, 40 * s, PAL.cream);
-}
 // letter() in local world coordinates (goes through the camera like any other letter)
 function letterAt(txt, x, y, size, col, o = {}) { letter(txt, x, y, size, col, o); }
-
-function pumpH(t) { const f = frac(bpOf(t)); return f < .78 ? ease(f / .78) : 1 - easeIn((f - .78) / .22); }
-function pumpProp(x, y, s, h, hoseTo) {
-  const sw = clamp(1.2 * s, .5, 2);
-  if (hoseTo) inkLine([[x + 30 * s, y - 20 * s], [lerp(x, hoseTo[0], .5), y + 30 * s], [hoseTo[0], hoseTo[1]]], 2.2 * s, PAL.ink, 'ink', .7);
-  push(); translate(x, y); scale(s);
-  paint(rectPts(-70, -18, 140, 18, 2), { wash: '#556070', ink: PAL.ink, sw });
-  const rod = 150 * h;
-  paint(rectPts(-6, -240 - rod, 12, rod + 30), { wash: '#C9CED6', ink: PAL.ink, sw: sw * .6 });
-  paint(rrPts(-60, -270 - rod, 120, 26, 12), { wash: PAL.ink, ink: null });
-  paint(rrPts(-32, -240, 64, 222, 14, 2), { wash: PAL.teal, fill: PAL.sky, fillOp: 70, tex: .6, ink: PAL.ink, sw });
-  inkLine([[-18, -225], [-18, -40]], .8, '#FFFFFF', 'inkfine', 0);
-  pop();
-}
