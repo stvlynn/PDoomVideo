@@ -60,7 +60,7 @@ function clawd(x, y, u, o = {}) {
     // body: flat base so it reads, a lighter pool up top and a darker settle along the bottom, ink last
     const body = rectPts(-5 * u, -8 * u, 10 * u, 6 * u, J);
     paint(body, { wash: col, washOp: 255, ink: null });
-    paint(ellPts(-1.6 * u, -6.4 * u, 3.4 * u, 1.5 * u, 18, J * 2, -.08), { fill: lt, fillOp: 120, bleed: .2, tex: .85, border: .8, ink: null });
+    paint(ellPts(-3.3 * u, -7.2 * u, 1.1 * u, .35 * u, 12, J, -.08), { wash: lt, washOp: 150, ink: null });   // glint
     paint(rectPts(-4.8 * u, -3.8 * u, 9.6 * u, 1.6 * u, J), { fill: dk, fillOp: 120, bleed: .03, tex: .7, border: .5, ink: null });
     paint(body, { ink: PAL.ink, sw });
 
@@ -69,6 +69,16 @@ function clawd(x, y, u, o = {}) {
     eyes(u, o, sw);
     mouth(u, o.mouth, sw);
     hat(u, o.hat, sw);
+  }
+  if (o.glasses) {                                       // "your" round glasses and hair tuft, once Clawd carries a piece of you
+    const k = clamp(o.glasses);
+    for (const gx of [-2.5, 2.5]) {
+      paint(ellPts(gx * u, -6 * u, 1.45 * u * k, 1.4 * u * k, 18), { wash: '#FFFFFF', washOp: 60, ink: null });
+      brush.noFill(); brush.noWash(); brush.noHatch(); brush.set('ink', PAL.ink, sw * 1.1);
+      brush.beginShape(0); for (const p of ellPts(gx * u, -6 * u, 1.45 * u * k, 1.4 * u * k, 18)) brush.vertex(p[0], p[1]); brush.endShape(true);
+    }
+    inkLine([[-1.05 * u, -6.1 * u], [1.05 * u, -6.1 * u]], sw, PAL.ink, 'ink', 0);
+    if (k > .5) tuft(.6 * u, -8 * u, u * 1.4 * k, .1);
   }
   if (o.draw) o.draw(u, sw);
   pop();

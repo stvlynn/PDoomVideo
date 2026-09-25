@@ -2,10 +2,13 @@
 //   node render.mjs --sheet=23,23.5,24 [--cols=3] [--w=640] --out=out/check.jpg   contact sheet (fast visual check)
 //   node render.mjs --stills=0.8,3,23.8 --out=out/test                          full-res PNG stills
 //   node render.mjs --clip=0:6 --fps=24 --out=out/test.mp4                      short clip with audio
-//   node render.mjs --frames=0:156.6 --workers=4                                full-res JPEG frames → out/frames (resumable)
-//   node render.mjs --encode [--out=out/pdoom.mp4]                               frames + song → MP4
-//   node render.mjs --loop=recursion [--out=out/loop_recursion]                 one cycle of a standalone loop (PNGs)
+//   node render.mjs --frames=0:295.3 --workers=2 [--fps=12]                     JPEG frames → out/frames (resumable)
+//   node render.mjs --encode [--fps=12] [--out=out/world_search_you.mp4]         frames + song → MP4 (always ≥ 24 fps)
+//   node render.mjs --loop=gallery [--out=out/loop_gallery]                     one cycle of a standalone loop (PNGs)
 //   (--loop also works with --sheet, where the times are loop time)
+// Options for every mode: --rs=0.5 paints the watercolor layer at half resolution (lettering and grain stay full-res),
+// --chrome=<path> picks the browser. Without a GPU, set GALLIUM_DRIVER=llvmpipe: Mesa's software GL is several times
+// faster than Chrome's built-in SwiftShader for this workload (GL_FLAGS overrides the --use-angle flags).
 import puppeteer from 'puppeteer-core';
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, existsSync, statSync, renameSync, readdirSync } from 'node:fs';
@@ -13,17 +16,19 @@ import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const args = Object.fromEntries(process.argv.slice(2).map(a => { const [k, v] = a.replace(/^--/, '').split('='); return [k, v ?? true]; }));
-const CHROME = args.chrome || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const DUR = 156.6, fps = +(args.fps || 24);
+const CHROME = args.chrome || process.env.CHROME || ({ win32: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  darwin: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' }[process.platform] ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome');
+const GL_ARGS = [...(process.platform === 'win32' ? ['--use-angle=d3d11'] : process.platform === 'darwin' ? ['--use-angle=metal'] : (process.env.GL_FLAGS || '--use-angle=gl-egl --use-gl=angle').split(' ')), ...(process.getuid?.() === 0 ? ['--no-sandbox'] : [])];
+const DUR = 295.3, fps = +(args.fps || 24);
 const FRAMES_DIR = 'out/frames';
 
 const run = (cmd, a) => new Promise((ok, bad) => { const p = spawn(cmd, a, { stdio: 'inherit' }); p.on('close', c => c ? bad(new Error(cmd + ' exited ' + c)) : ok()); });
 
 if (args.encode) {
-  const out = args.out || 'out/pdoom.mp4', n = readdirSync(FRAMES_DIR).filter(f => f.endsWith('.jpg')).length;
+  const out = args.out || 'out/world_search_you.mp4', n = readdirSync(FRAMES_DIR).filter(f => f.endsWith('.jpg')).length;
   console.log(`encoding ${n} frames → ${out}`);
-  await run('ffmpeg', ['-y', '-loglevel', 'error', '-stats', '-framerate', String(fps), '-i', `${FRAMES_DIR}/f%05d.jpg`, '-i', 'assets/pdoom.mp3',
-    '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'slow', '-crf', '17', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k',
+  await run('ffmpeg', ['-y', '-loglevel', 'error', '-stats', '-framerate', String(fps), '-i', `${FRAMES_DIR}/f%05d.jpg`, '-i', 'assets/song.mp3',
+    '-map', '0:v', '-map', '1:a', '-r', String(Math.max(24, fps)), '-c:v', 'libx264', '-preset', 'slow', '-crf', '17', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k',
     '-movflags', '+faststart', '-shortest', out]);
   console.log('wrote ' + out);
   process.exit(0);
@@ -31,13 +36,13 @@ if (args.encode) {
 
 const browser = await puppeteer.launch({
   executablePath: CHROME, headless: true, protocolTimeout: 0,
-  args: ['--allow-file-access-from-files', '--ignore-gpu-blocklist', '--use-angle=d3d11', '--enable-gpu-rasterization', '--window-size=1920,1080', '--disable-renderer-backgrounding', '--disable-background-timer-throttling']
+  args: ['--allow-file-access-from-files', '--disable-background-networking', '--no-first-run', '--ignore-gpu-blocklist', ...GL_ARGS, '--enable-gpu-rasterization', '--window-size=1920,1080', '--disable-renderer-backgrounding', '--disable-background-timer-throttling']
 });
 async function openPage(tag = '') {
   const page = await browser.newPage();
   page.on('console', m => { if (['error', 'warn'].includes(m.type())) console.log(`[page${tag}]`, m.text()); });
   page.on('pageerror', e => console.log(`[page error${tag}]`, e.message));
-  await page.goto(pathToFileURL(resolve('studio.html')).href + '?render', { waitUntil: 'networkidle0' });
+  await page.goto(pathToFileURL(resolve('studio.html')).href + '?render' + (args.rs ? '&rs=' + args.rs : '') + (args.fm != null ? '&fm=' + args.fm : ''), { waitUntil: 'load' });
   await page.waitForFunction('window.ready === true', { timeout: 60000 });
   if (args.loop) await page.evaluate(name => { window.LOOP = LOOPS[name]; }, args.loop);
   return page;
@@ -98,7 +103,7 @@ if (args.sheet) {
   const [a, b] = args.clip ? String(args.clip).split(':').map(Number) : [0, DUR];
   const out = args.out || 'out/clip.mp4'; mkdirSync(dirname(out), { recursive: true });
   const ff = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-framerate', String(fps), '-c:v', 'mjpeg', '-i', '-',
-    '-ss', String(a), '-t', String(b - a), '-i', 'assets/pdoom.mp3',
+    '-ss', String(a), '-t', String(b - a), '-i', 'assets/song.mp3',
     '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'medium', '-crf', '19', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-shortest', out],
     { stdio: ['pipe', 'inherit', 'inherit'] });
   const n = Math.round((b - a) * fps), start = Date.now();

@@ -1,4 +1,4 @@
-// timeline.js: chapter registry, brush-wipe chapter breaks, karaoke, corner P(doom) meter.
+// timeline.js: chapter registry, brush-wipe chapter breaks, karaoke.
 //
 // Each chapter file calls chapter(name, start, end, shots) where shots = [[t0, fn], ...] in time order.
 // A shot function is called as fn(t, lt, dur): t = song time, lt = t - t0, dur = shot length. It paints the whole frame
@@ -8,20 +8,8 @@ const CH = [];
 function chapter(name, start, end, shots) { CH.push({ name, start, end, shots }); CH.sort((a, b) => a.start - b.start); }
 
 // Chapter breaks that get a brush wipe (cover by the boundary, reveal after it).
-const WIPES = [1.5, 38.5, 73.0, 109.4];
+const WIPES = [39.9, 81.9, 150.9, 232.9];
 const WIPE_TR = .3;
-
-const METER = [[23, 35.5, 8, 34], [59, 69.9, 34, 61], [95.4, 105.4, 61, 86], [123.5, 132, 86, 99.9]];
-// P(doom) at time t: climbs in pump-sized steps on each beat during the chorus windows, holds in between.
-function pdoomAt(t) {
-  let v = 5;
-  for (const [a, b, v0, v1] of METER) {
-    if (t < a) break;
-    const n = Math.max(1, Math.round((b - a) / BEAT)), p = clamp((t - a) / (b - a)) * n;
-    v = t >= b ? v1 : lerp(v0, v1, (Math.floor(p) + easeOut(clamp(frac(p) * 4))) / n);
-  }
-  return v;
-}
 
 // Standalone loops (GIFs, not part of the video): window.LOOP = LOOPS[name] swaps the whole frame for that scene,
 // with no karaoke, meter or wipes. t is then loop time, not song time.
@@ -37,7 +25,6 @@ function drawWorld(t) {
     CAM = null;
   }
   flushLetters();
-  if (!METER_SHOWN) { cornerMeter(t); flushLetters(); }
   WIPES.forEach((b, j) => { if (Math.abs(t - b) < WIPE_TR) wipe((t - (b - WIPE_TR)) / (2 * WIPE_TR), j); });
   karaoke(t);
 }
@@ -48,28 +35,9 @@ function placeholder(t) {
   dancer(960, 900, 12, 'idle', t, {});
 }
 
-// ---------- corner meter (only in chorus windows, only when no scene drew the stage meter) ----------
-function cornerMeter(t) {
-  for (const [a, b] of METER) {
-    if (t < a || t >= b + .3) continue;
-    const v = pdoomAt(t), k = backOut((t - a) / .4) * (1 - ease((t - b) / .3));
-    if (k < .02) return;
-    const col = meterColor(v), x = 1760, y = 110;
-    push(); translate(x, y); scale(k * .85);
-    paint(rrPts(-36, 50, 72, 330, 36, 2), { wash: PAL.cream, washOp: 255, ink: PAL.ink, sw: 1.3 });
-    const hh = 300 * v / 100;
-    if (hh > 20) paint(rrPts(-22, 62 + 300 - hh, 44, hh, 22, 1.5), { wash: col, washOp: 230, fill: PAL.ink, fillOp: 30, tex: .6, ink: null });
-    for (let q = 1; q < 5; q++) inkLine([[-36, 62 + 300 * q / 5], [-16, 62 + 300 * q / 5]], .7, PAL.ink, 'inkfine', 0);
-    paint(ellPts(0, 410, 56, 56, 22, 2), { wash: col, washOp: 240, fill: PAL.ink, fillOp: 25, ink: PAL.ink, sw: 1.3 });
-    pop();
-    letter('P(DOOM)', x, y + 14, 40 * k, PAL.cream, { rot: -.05 });
-    letter(Math.floor(v) + '%', x, y + 410 * k * .85, 36 * k, PAL.cream);
-  }
-}
-
 // ---------- brush wipe ----------
 // Fat paint strokes sweep across to cover the old scene, the scene swaps under full cover (p = .5), then they drag off.
-const WIPE_COLS = [[PAL.clayDk, PAL.clay], [PAL.indigo, PAL.violet], [PAL.teal, PAL.sap], [PAL.violet, PAL.rose], [PAL.ochre, PAL.clay]];
+const WIPE_COLS = [[PAL.sap, PAL.teal], [PAL.indigo, PAL.violet], [PAL.ochre, PAL.clay], [PAL.rose, PAL.violet], [PAL.teal, PAL.sky]];
 function wipe(p, idx) {
   const [c1, c2] = WIPE_COLS[idx % WIPE_COLS.length], n = 5, bh = (H + 420) / n + 40;
   push(); translate(W / 2, H / 2); rotate(-.1); translate(-W / 2, -H / 2);
